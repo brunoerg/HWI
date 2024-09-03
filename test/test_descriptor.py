@@ -154,6 +154,13 @@ class TestDescriptor(unittest.TestCase):
     def test_parse_empty_descriptor(self):
         self.assertRaises(ValueError, parse_descriptor, "")
 
+    def test_parse_empty_keys(self):
+        self.assertRaises(ValueError, parse_descriptor, "pk()")
+        self.assertRaises(ValueError, parse_descriptor, "pkh()")
+        self.assertRaises(ValueError, parse_descriptor, "pk(,)")
+        self.assertRaises(ValueError, parse_descriptor, "pkh(,)")
+        self.assertRaises(ValueError, parse_descriptor, "sh(multi(2,,xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y/0))")
+
     def test_parse_descriptor_replace_h(self):
         d = "wpkh([00000001/84h/1h/0h]tpubD6NzVbkrYhZ4WaWSyoBvQwbpLkojyoTZPRsgXELWz3Popb3qkjcJyJUGLnL4qHHoQvao8ESaAstxYSnhyswJ76uZPStJRJCTKvosUCJZL5B/0/0)"
         desc = parse_descriptor(d)

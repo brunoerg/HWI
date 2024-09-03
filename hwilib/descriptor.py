@@ -448,8 +448,11 @@ def _get_const(s: str, const: str) -> str:
     :param s: The string that begins with a constant character
     :param const: The constant character
     :return: The remainder of the string without the constant character
-    :raises: ValueError: if the first character is not the constant character
+    :raises: ValueError: if the first character is not the constant character or 
+    string has 1 or less characters.
     """
+    if len(s) <= 1:
+        raise ValueError(f"'{str}' has less than 2 characters")
     if s[0] != const:
         raise ValueError(f"Expected '{const}' but got '{s[0]}'")
     return s[1:]
@@ -490,6 +493,10 @@ def parse_pubkey(expr: str) -> Tuple['PubkeyProvider', str]:
     if comma_idx != -1:
         end = comma_idx
         next_expr = expr[end + 1:]
+
+    if len(expr[:end]) == 0:
+        raise ValueError("There is no pubkey to parse")
+
     return PubkeyProvider.parse(expr[:end]), next_expr
 
 
