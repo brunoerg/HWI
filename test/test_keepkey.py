@@ -64,6 +64,7 @@ class KeepkeyEmulator(DeviceEmulator):
         self.strict_bip48 = False
         self.include_xpubs = False
         self.supports_device_multiple_multisig = True
+        self.supports_legacy = True
 
     def start(self):
         super().start()
@@ -76,6 +77,10 @@ class KeepkeyEmulator(DeviceEmulator):
         sock.connect(('127.0.0.1', 11044))
         sock.settimeout(0)
         while True:
+            # Prevent CI from lingering until timeout:
+            if self.emulator_proc.poll() is not None:
+                raise RuntimeError(f"Keepkey simulator failed with exit code {self.emulator_proc.poll()}")
+
             try:
                 sock.sendall(b"PINGPING")
                 r = sock.recv(8)

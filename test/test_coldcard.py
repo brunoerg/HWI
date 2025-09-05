@@ -44,6 +44,7 @@ class ColdcardSimulator(DeviceEmulator):
         self.strict_bip48 = False
         self.include_xpubs = False
         self.supports_device_multiple_multisig = True
+        self.supports_legacy = True
 
     def start(self):
         super().start()
@@ -52,7 +53,7 @@ class ColdcardSimulator(DeviceEmulator):
         self.coldcard_proc = subprocess.Popen(
             [
                 "python3",
-                os.path.basename(self.simulator), "--ms"
+                os.path.basename(self.simulator), "--ms", "--headless"
             ],
             cwd=os.path.dirname(self.simulator),
             stdout=self.coldcard_log,
@@ -60,6 +61,10 @@ class ColdcardSimulator(DeviceEmulator):
         )
         # Wait for simulator to be up
         while True:
+            # Prevent CI from lingering until timeout:
+            if self.coldcard_proc.poll() is not None:
+                raise RuntimeError(f"coldcard simulator failed with exit code {self.coldcard_proc.poll()}")
+
             try:
                 enum_res = process_commands(["--emulators", "enumerate"])
                 found = False

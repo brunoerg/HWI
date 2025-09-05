@@ -34,6 +34,10 @@ while [[ $# -gt 0 ]]; do
         build_jade=1
         shift
         ;;
+        --bitbox02)
+        build_bitbox02=1
+        shift
+        ;;
         --bitcoind)
         build_bitcoind=1
         shift
@@ -46,6 +50,7 @@ while [[ $# -gt 0 ]]; do
         build_ledger=1
         build_keepkey=1
         build_jade=1
+        build_bitbox02=1
         build_bitcoind=1
         shift
         ;;
@@ -105,6 +110,7 @@ if [[ -n ${build_trezor_1} || -n ${build_trezor_t} ]]; then
         rustup toolchain install nightly
         rustup default nightly
         rustup component add rustfmt
+        rustup component add rust-src --toolchain nightly-x86_64-unknown-linux-gnu
         # Build trezor t emulator. This is pretty fast, so rebuilding every time is ok
         # But there should be some caching that makes this faster
         poetry install
@@ -243,7 +249,7 @@ if [[ -n ${build_keepkey} ]]; then
 fi
 
 if [[ -n ${build_ledger} ]]; then
-    speculos_packages="construct flask-restful jsonschema mnemonic pyelftools pillow requests pytesseract"
+    speculos_packages="construct flask-cors flask-restful jsonschema mnemonic pyelftools pillow requests pytesseract"
     poetry run pip install ${speculos_packages}
     pip install ${speculos_packages}
     # Clone ledger simulator Speculos if it doesn't exist, or update it if it does
@@ -300,54 +306,10 @@ if [[ -n ${build_jade} ]]; then
         git submodule update --recursive --init
     fi
 
-    # Deduce the relevant versions of esp-idf and qemu to use
+    # Deduce the relevant version of esp-idf to use
     ESP_IDF_BRANCH=$(grep "ARG ESP_IDF_BRANCH=" Dockerfile | cut -d\= -f2)
     ESP_IDF_COMMIT=$(grep "ARG ESP_IDF_COMMIT=" Dockerfile | cut -d\= -f2)
-    ESP_QEMU_BRANCH=$(grep "ARG ESP_QEMU_BRANCH=" Dockerfile | cut -d\= -f2)
-    ESP_QEMU_COMMIT=$(grep "ARG ESP_QEMU_COMMIT=" Dockerfile | cut -d\= -f2)
     cd ..
-
-    # Build the qemu emulator if required
-
-    # If the directory exists, see if it is at the expected commit
-    # If not, remove the entire directory (it will be re-cloned below)
-    if [ -d "qemu" ]; then
-        cd qemu
-        LOCAL=$(git rev-parse @)
-        if [ $LOCAL = $ESP_QEMU_COMMIT ]; then
-            echo "esp-qemu up-to-date"
-            cd ..
-        else
-            cd ..
-            rm -fr qemu
-        fi
-    fi
-
-    # Clone the upstream if the directory does not exist
-    # Then build the emulator
-    if [ ! -d "qemu" ]; then
-        git clone --depth 1 --branch ${ESP_QEMU_BRANCH} --single-branch --recursive https://github.com/espressif/qemu.git ./qemu
-        cd qemu
-
-        git checkout ${ESP_QEMU_COMMIT}
-        git submodule update --recursive --init
-        ./configure \
-            --target-list=xtensa-softmmu \
-            --enable-gcrypt \
-            --disable-sanitizers \
-            --disable-strip \
-            --disable-user \
-            --disable-capstone \
-            --disable-vnc \
-            --disable-sdl \
-            --disable-gtk \
-            --enable-slirp \
-            --extra-cflags=-Wno-array-parameter
-        ninja -C build
-        cd ..
-    fi
-
-    # Build the esp-idf toolchain if required
 
     # We will install the esp-idf tools in a given location (otherwise defaults to user home dir)
     export IDF_TOOLS_PATH="$(pwd)/esp-idf-tools"
@@ -369,7 +331,7 @@ if [[ -n ${build_jade} ]]; then
     # Clone the upstream if the directory does not exist
     # Then build and install the tools
     if [ ! -d "esp-idf" ]; then
-        git clone --depth=1 --branch ${ESP_IDF_BRANCH} --single-branch --recursive https://github.com/espressif/esp-idf.git ./esp-idf
+        git clone --quiet --depth=1 --branch ${ESP_IDF_BRANCH} --single-branch --recursive --shallow-submodules https://github.com/espressif/esp-idf.git ./esp-idf
         cd esp-idf
 
         git checkout ${ESP_IDF_COMMIT}
@@ -390,6 +352,13 @@ if [[ -n ${build_jade} ]]; then
     # Export the tools
     . ./esp-idf/export.sh
 
+    # Install the emulator
+    idf_tools.py install qemu-xtensa
+    QEMU_EXE=$(find ${IDF_TOOLS_PATH} -type f -name qemu-system-xtensa)
+    QEMU_BIOS_DIR=$(dirname "${QEMU_EXE}")/../share/qemu
+    echo "Installed qemu emulator: ${QEMU_EXE}"
+    echo "Installed qemu bios files: ${QEMU_BIOS_DIR}"
+
     # Build Blockstream Jade firmware configured for the emulator
     cd jade
     rm -fr sdkconfig
@@ -408,12 +377,42 @@ if [[ -n ${build_jade} ]]; then
     # Extract the minimal artifacts required to run the emulator
     rm -fr simulator
     mkdir simulator
-    cp qemu/build/qemu-system-xtensa simulator/
-    cp -R qemu/pc-bios simulator/
+    cp ${QEMU_EXE} simulator/
+    cp -R ${QEMU_BIOS_DIR} simulator/pc-bios
     cp jade/main/qemu/flash_image.bin simulator/
     cp jade/main/qemu/qemu_efuse.bin simulator/
 
     cd ..
+fi
+
+if [[ -n ${build_bitbox02} ]]; then
+    # Clone digital bitbox02 firmware if it doesn't exist, or update it if it does
+    if [ ! -d "bitbox02-firmware" ]; then
+        git clone --recursive https://github.com/BitBoxSwiss/bitbox02-firmware.git
+        cd bitbox02-firmware
+    else
+        cd bitbox02-firmware
+        git fetch
+
+        # Determine if we need to pull. From https://stackoverflow.com/a/3278427
+        UPSTREAM=${1:-'@{u}'}
+        LOCAL=$(git rev-parse @)
+        REMOTE=$(git rev-parse "$UPSTREAM")
+        BASE=$(git merge-base @ "$UPSTREAM")
+
+        if [ $LOCAL = $REMOTE ]; then
+            echo "Up-to-date"
+        elif [ $LOCAL = $BASE ]; then
+            git pull
+        fi
+    fi
+
+    # Build the simulator. This is cached, but it is also fast
+    CONTAINER_VERSION=$(cat .containerversion)
+    docker pull shiftcrypto/firmware_v2:$CONTAINER_VERSION
+    # The safe.directory config is so that git commands work. even though the repo folder mounted in
+    # Docker is owned by root, which can be different from the owner on the host.
+    docker run -i --rm --volume $(pwd):/bb02 shiftcrypto/firmware_v2:$CONTAINER_VERSION bash -c "git config --global --add safe.directory /bb02 && cd /bb02 && make -j simulator"
 fi
 
 if [[ -n ${build_bitcoind} ]]; then
@@ -444,10 +443,10 @@ if [[ -n ${build_bitcoind} ]]; then
 
     # Build bitcoind. This is super slow, but it is cached so it runs fairly quickly.
     pushd depends
-    make NO_QT=1 NO_QR=1 NO_ZMQ=1 NO_UPNP=1 NO_NATPMP=1 NO_USDT=1
+    make -j $(nproc) NO_QT=1 NO_QR=1 NO_ZMQ=1 NO_UPNP=1 NO_NATPMP=1 NO_USDT=1
     popd
 
     # Do the build
     cmake -B build --toolchain depends/x86_64-pc-linux-gnu/toolchain.cmake -DBUILD_TESTS=OFF -DBUILD_BENCH=OFF
-    cmake --build build --target bitcoind
+    cmake --build build -j $(nproc) --target bitcoind
 fi

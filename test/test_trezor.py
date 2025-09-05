@@ -63,6 +63,7 @@ class TrezorEmulator(DeviceEmulator):
         self.strict_bip48 = True
         self.include_xpubs = False
         self.supports_device_multiple_multisig = True
+        self.supports_legacy = True
 
     def start(self):
         super().start()
@@ -75,6 +76,10 @@ class TrezorEmulator(DeviceEmulator):
         sock.connect(('127.0.0.1', 21324))
         sock.settimeout(0)
         while True:
+            # Prevent CI from lingering until timeout:
+            if self.emulator_proc.poll() is not None:
+                raise RuntimeError(f"Trezor simulator failed with exit code {self.emulator_proc.poll()}")
+
             try:
                 sock.sendall(b"PINGPING")
                 r = sock.recv(8)
